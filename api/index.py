@@ -137,3 +137,11 @@ def not_found(e):
     return jsonify(ok=False, error='not_found'), 404
 
 application=app
+
+@app.get('/debug')
+def debug():
+    try:
+        test = db.reference('licenses').get()
+        return jsonify(ok=True, firebase='connected', keys=len(test or {}))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
