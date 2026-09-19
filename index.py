@@ -192,11 +192,22 @@ def runtime_check():
         ref = db.reference(f"runtime_devices/{_runtime_device_record(device_id)}")
         rec = ref.get() or {}
         if rec.get("blocked") is True:
-            return jsonify(
-                ok=False,
-                blocked=True,
-                reason=rec.get("reason", "runtime_blocked"),
-            ), 403
+            # Legacy versions treated every generic `runtime_signal` as a
+            # permanent block.  Migrate that false-positive state once.
+            if rec.get("reason") == "runtime_signal":
+                now = now_ms()
+                ref.update({
+                    "blocked": False,
+                    "unblocked_at": now,
+                    "unblock_reason": "legacy_runtime_signal_migration",
+                })
+                rec = ref.get() or {}
+            else:
+                return jsonify(
+                    ok=False,
+                    blocked=True,
+                    reason=rec.get("reason", "runtime_blocked"),
+                ), 403
 
         now = now_ms()
         update = {
@@ -264,6 +275,35 @@ def admin_guard():
     if not auth():
         return jsonify(ok=False, error="unauthorized"), 401
     return None
+
+
+@app.post("/admin/unblock-runtime")
+def unblock_runtime():
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        d = request.get_json(silent=True) or {}
+        device_id = str(d.get("device_id", "") or "").strip()
+        if not device_id:
+            return jsonify(ok=False, error="missing_device_id"), 400
+        device_hash = _runtime_device_record(device_id)
+        ref = db.reference(f"runtime_devices/{device_hash}")
+        rec = ref.get() or {}
+        if not rec:
+            return jsonify(ok=False, error="not_found"), 404
+        now = now_ms()
+        ref.update({
+            "blocked": False,
+            "unblocked_at": now,
+            "unblock_reason": "admin_manual_unblock",
+        })
+        return jsonify(ok=True, blocked=False, device_id_hash=device_hash)
+    except Exception as exc:
+        return firebase_error("admin_unblock_runtime", exc)
 
 
 @app.post("/admin/create-key")
