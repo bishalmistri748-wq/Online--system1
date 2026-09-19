@@ -1,208 +1,429 @@
-import os, json, hmac, hashlib, secrets, string
+import os
+import json
+import hmac
+import hashlib
+import secrets
+import string
+import traceback
 from datetime import datetime, timezone
+
 from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, db
 
 app = Flask(__name__)
-DATABASE_URL = os.environ.get('FIREBASE_DATABASE_URL','https://gfxtool-bb32f-default-rtdb.firebaseio.com/').rstrip('/')
+
+DATABASE_URL = os.environ.get(
+    "FIREBASE_DATABASE_URL",
+    "https://gfxtool-bb32f-default-rtdb.firebaseio.com/",
+).strip().rstrip("/")
 ADMIN_SECRET = os.environ.get('ADMIN_SECRET','SlFVoNDazRPb3A0n1DvWmXuEdcfoIfiMOjL7diW-hVLR-u4DC9MgqkpVK8JSN2NyUrvYVBC-wviN5D6KBoIzlwRvsw4VC9hYR9yi2V6yPzUV4sHhClDRqPVufwqivGXGEUxX9gY74ZxS9m1jSrNq9jP_PWzJwecJox0BeGBS9DA3yuwuVzTG5XLqI2r6pXEaY4CgNNbhz0jkpoKVzWiwnEhAbgFhTVHpaafmXJo1Ipx0PIVklKZdmjVf1t1Pgt-IaYC1ZVq394JxmT6uKTjGdd1Cm7RqOvJyEYNtlx5MfoRglVBJTbIRpSVGUN7cL-bfhGKNR3tarOSZI4eM9EL9rQ').strip()
+SERVICE_ACCOUNT_FILENAME = "gfxtool-bb32f-firebase-adminsdk-70hn7-440af8a6f8.json"
 
-# Firebase service-account credential embedded directly in this file.
-FIREBASE_SERVICE_ACCOUNT_JSON = {'type': 'service_account','project_id': 'gfxtool-bb32f','private_key_id': '063b8bf0f6652c70c745ef33bc98bc569864fc90','private_key': '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCnmb4s9Q+c3yrb\n7vX/4YQFlNthVCnio+h3ocJJ4NrM5I9wASoVdHsjrPexKmiaFkUC0afN7g74pocZ\nDk4k+JFHBPpZzzUlu8plaU+XhS9e8wSECgIFrX4NKeUMm8eXS+7nSKqKUthAzLr0\np3N56US9ZeQGJPW6mQgDsH1S+SvnjOCMQAudt/81AYHl007qoJ6CHpvw0xneEXel\n8JhG7wmOFePNcN2Ax3jQRWQ48ydt7ahGBv6Yi4t3UYf3gjIQxvGsaFnBD19rDQu7\n7C3D4aSO9AmAXUMVUu6LwHo7PF/szIWuZXfMDcd/uvs9ZkNRQ0C+U12jjLUqF2pH\nK/bZcs33AgMBAAECggEAASiKm4NfesX/DALKXNHGSUxI9A1BpYyqjNOOg5nxSpXv\nCZkjl6uWKnchk6W4K+GB9PITDeAuCAyHpGuPaal7A2TR2UWUDIur/BefXwfEL/aC\nBeq7cV4U0hRiOKBZQ9fpYSSKeTThM6nM1uexuWhUHIOyovn5YB0LWZIicSyg6uFg\nTEgusNlFjVUbcGcjCCW6PGyGIT2bbEai0xAylUycs+9avTaNQnQGg9vo740lckJL\nBv5l7pSZV9QQBfyR1ZgeqBTYzVTe3VA/nJBGzCkTkY/6CUn1bjdYX0CdRENw1/26\nikg2X3wjI4avkmkUSELfkwjkdsQaRTeVZXZY6g5YEQKBgQDZtdV2d4hPTx4jIZl0\n7vZjuXQXOAhw5YRnk1z5wgLSsNA1d6vcP6sga8sRVPx/WN/WwrQsaj3BNEI+wfIq\nAN6ZiQlXJ3oPYB2JxxgQLNO6KNDmyqW1TsEZJYe1CNRvT+wPasHZaQ+yGoQJeziR\nt1A77k6LvhsvEh6tZHZCIEBAQwKBgQDFE8YImXRDuxpSQ/llng44lcOQjTNbx6q2\n8duSXqaS2cyySjpX64KDNuzgJRWYWQW4Nn1M4p1AtRHTuSJwgJ/owjIh2qP+ptXr\npvJbdpdVLPFhls6ji/FV0sSKzqIw0sLSW3FRAX5xlh2N6enTPurOXKffs+EWq+8B\nGTW22r2qPQKBgADkwyyKTw/sRjZks+mL9YzxPO2/eCFmf8WhEDeiOTq+KQyfIiB0\nTnKCnsHCdIrdRYXvJKguA3TgjwkM6L6NZFyC+HvYGKMphNWE8K9YT8Iq2rinykhV\nO2usAMOYdq7CSDjD+mm3Ca50d2hGjjPi6bxlPQNL03a8/0085VNeKIVbAoGBALNE\nH1lnLQkHQxQd3NiAg3MZWAE/T75my3UKX66vBlqCX962AohDJD7zUVk6ooAoSjmc\n5zFu2ZgonQS4XQl1FwCE1VFSLubPH7vx6nckUtgZv6ADrAe8nlRxGnMhLwu2S51J\nrLQA5eGwqUWTxyxvCOuaAOJOH6udzhRzuBaStwAJAoGAEk+LfuslmpKBSC+9m6Gr\nWl6/uPjxMwphU/yBtd3zDlG4Uwx0DTLmLvRuSaoXbbAPLiABhB7eanhHyOdzKvZM\ncXxBZmA5SJ3BWx8HTq83fnwicJyc08qqRrJgYlgyCqsDxVdSQBuc3Olj8j/KX4l8\nOrTkNV11ZYtR/oCWf2fw25Q=\n-----END PRIVATE KEY-----\n','client_email': 'firebase-adminsdk-70hn7@gfxtool-bb32f.iam.gserviceaccount.com','client_id': '113521204726986896638','auth_uri': 'https://accounts.google.com/o/oauth2/auth','token_uri': 'https://oauth2.googleapis.com/token','auth_provider_x509_cert_url': 'https://www.googleapis.com/oauth2/v1/certs','client_x509_cert_url': 'https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-70hn7%40gfxtool-bb32f.iam.gserviceaccount.com','universe_domain': 'googleapis.com'}
+_db_ready = False
+_db_error = None
 
-if not firebase_admin._apps:
-    firebase_admin.initialize_app(
-        credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_JSON),
-        {'databaseURL': DATABASE_URL}
+
+def _load_credentials():
+    # Keep the Firebase service-account JSON embedded directly in index.py.
+    FIREBASE_SERVICE_ACCOUNT_JSON = {'type': 'service_account','project_id': 'gfxtool-bb32f','private_key_id': '063b8bf0f6652c70c745ef33bc98bc569864fc90','private_key': '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCnmb4s9Q+c3yrb\n7vX/4YQFlNthVCnio+h3ocJJ4NrM5I9wASoVdHsjrPexKmiaFkUC0afN7g74pocZ\nDk4k+JFHBPpZzzUlu8plaU+XhS9e8wSECgIFrX4NKeUMm8eXS+7nSKqKUthAzLr0\np3N56US9ZeQGJPW6mQgDsH1S+SvnjOCMQAudt/81AYHl007qoJ6CHpvw0xneEXel\n8JhG7wmOFePNcN2Ax3jQRWQ48ydt7ahGBv6Yi4t3UYf3gjIQxvGsaFnBD19rDQu7\n7C3D4aSO9AmAXUMVUu6LwHo7PF/szIWuZXfMDcd/uvs9ZkNRQ0C+U12jjLUqF2pH\nK/bZcs33AgMBAAECggEAASiKm4NfesX/DALKXNHGSUxI9A1BpYyqjNOOg5nxSpXv\nCZkjl6uWKnchk6W4K+GB9PITDeAuCAyHpGuPaal7A2TR2UWUDIur/BefXwfEL/aC\nBeq7cV4U0hRiOKBZQ9fpYSSKeTThM6nM1uexuWhUHIOyovn5YB0LWZIicSyg6uFg\nTEgusNlFjVUbcGcjCCW6PGyGIT2bbEai0xAylUycs+9avTaNQnQGg9vo740lckJL\nBv5l7pSZV9QQBfyR1ZgeqBTYzVTe3VA/nJBGzCkTkY/6CUn1bjdYX0CdRENw1/26\nikg2X3wjI4avkmkUSELfkwjkdsQaRTeVZXZY6g5YEQKBgQDZtdV2d4hPTx4jIZl0\n7vZjuXQXOAhw5YRnk1z5wgLSsNA1d6vcP6sga8sRVPx/WN/WwrQsaj3BNEI+wfIq\nAN6ZiQlXJ3oPYB2JxxgQLNO6KNDmyqW1TsEZJYe1CNRvT+wPasHZaQ+yGoQJeziR\nt1A77k6LvhsvEh6tZHZCIEBAQwKBgQDFE8YImXRDuxpSQ/llng44lcOQjTNbx6q2\n8duSXqaS2cyySjpX64KDNuzgJRWYWQW4Nn1M4p1AtRHTuSJwgJ/owjIh2qP+ptXr\npvJbdpdVLPFhls6ji/FV0sSKzqIw0sLSW3FRAX5xlh2N6enTPurOXKffs+EWq+8B\nGTW22r2qPQKBgADkwyyKTw/sRjZks+mL9YzxPO2/eCFmf8WhEDeiOTq+KQyfIiB0\nTnKCnsHCdIrdRYXvJKguA3TgjwkM6L6NZFyC+HvYGKMphNWE8K9YT8Iq2rinykhV\nO2usAMOYdq7CSDjD+mm3Ca50d2hGjjPi6bxlPQNL03a8/0085VNeKIVbAoGBALNE\nH1lnLQkHQxQd3NiAg3MZWAE/T75my3UKX66vBlqCX962AohDJD7zUVk6ooAoSjmc\n5zFu2ZgonQS4XQl1FwCE1VFSLubPH7vx6nckUtgZv6ADrAe8nlRxGnMhLwu2S51J\nrLQA5eGwqUWTxyxvCOuaAOJOH6udzhRzuBaStwAJAoGAEk+LfuslmpKBSC+9m6Gr\nWl6/uPjxMwphU/yBtd3zDlG4Uwx0DTLmLvRuSaoXbbAPLiABhB7eanhHyOdzKvZM\ncXxBZmA5SJ3BWx8HTq83fnwicJyc08qqRrJgYlgyCqsDxVdSQBuc3Olj8j/KX4l8\nOrTkNV11ZYtR/oCWf2fw25Q=\n-----END PRIVATE KEY-----\n','client_email': 'firebase-adminsdk-70hn7@gfxtool-bb32f.iam.gserviceaccount.com','client_id': '113521204726986896638','auth_uri': 'https://accounts.google.com/o/oauth2/auth','token_uri': 'https://oauth2.googleapis.com/token','auth_provider_x509_cert_url': 'https://www.googleapis.com/oauth2/v1/certs','client_x509_cert_url': 'https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-70hn7%40gfxtool-bb32f.iam.gserviceaccount.com','universe_domain': 'googleapis.com'}
+    return credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_JSON)
+def init_firebase():
+    global _db_ready, _db_error
+    if _db_ready:
+        return True
+    if _db_error:
+        return False
+    try:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(
+                _load_credentials(),
+                {"databaseURL": DATABASE_URL},
+            )
+        _db_ready = True
+        return True
+    except Exception as exc:
+        _db_error = f"{type(exc).__name__}: {exc}"
+        print("[FIREBASE INIT ERROR]", _db_error)
+        traceback.print_exc()
+        return False
+
+
+def require_firebase():
+    if init_firebase():
+        return None
+    return jsonify(
+        ok=False,
+        error="firebase_not_configured",
+        message=(_db_error or "Firebase initialization failed")[:1000],
+    ), 503
+
+
+def firebase_error(operation, exc):
+    msg = f"{type(exc).__name__}: {exc}"
+    print(f"[FIREBASE ERROR] {operation}: {msg}")
+    traceback.print_exc()
+    return jsonify(
+        ok=False,
+        error="firebase_error",
+        operation=operation,
+        message=msg[:1000],
+    ), 502
+
+
+def now_ms():
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def clean(k):
+    return str(k or "").strip().upper()
+
+
+def kid(k):
+    return hashlib.sha256(clean(k).encode()).hexdigest()
+
+
+def auth():
+    supplied = request.headers.get("x-admin-secret", "")
+    return bool(ADMIN_SECRET) and hmac.compare_digest(supplied, ADMIN_SECRET)
+
+
+def get(k):
+    return db.reference(f"licenses/{kid(k)}").get()
+
+
+def newkey():
+    return "ENC-" + "".join(
+        secrets.choice(string.ascii_uppercase + string.digits) for _ in range(16)
     )
 
-def now_ms(): return int(datetime.now(timezone.utc).timestamp()*1000)
-def clean(k): return str(k or '').strip().upper()
-def kid(k): return hashlib.sha256(clean(k).encode()).hexdigest()
-def auth(): return bool(ADMIN_SECRET) and hmac.compare_digest(request.headers.get('x-admin-secret',''), ADMIN_SECRET)
-def get(k): return db.reference(f'licenses/{kid(k)}').get()
-def newkey(): return 'ENC-' + ''.join(secrets.choice(string.ascii_uppercase+string.digits) for _ in range(16))
 
 def check(k, app_id, device_id):
-    k=clean(k); app_id=str(app_id or '').strip(); device_id=str(device_id or '').strip()
-    if not k or not app_id or not device_id: return False,'missing_fields',None
-    lic=get(k)
-    if not lic: return False,'invalid_license',None
-    if lic.get('revoked') is True: return False,'revoked',lic
-    if int(lic.get('expires_at',0) or 0) and now_ms() >= int(lic['expires_at']): return False,'expired',lic
-    if str(lic.get('app_id','') or '') and lic.get('app_id') != app_id: return False,'app_mismatch',lic
-    devices=lic.get('devices') or {}; limit=int(lic.get('max_devices', 1))
+    k = clean(k)
+    app_id = str(app_id or "").strip()
+    device_id = str(device_id or "").strip()
+    if not k or not app_id or not device_id:
+        return False, "missing_fields", None
+
+    lic = get(k)
+    if not lic:
+        return False, "invalid_license", None
+    if lic.get("revoked") is True:
+        return False, "revoked", lic
+    if int(lic.get("expires_at", 0) or 0) and now_ms() >= int(lic["expires_at"]):
+        return False, "expired", lic
+    if str(lic.get("app_id", "") or "") and lic.get("app_id") != app_id:
+        return False, "app_mismatch", lic
+
+    devices = lic.get("devices") or {}
+    limit = int(lic.get("max_devices", 1) or 0)
     if device_id not in devices:
-        if limit != 0 and len(devices) >= limit: return False,'device_limit',lic
-        devices[device_id]={'bound_at':now_ms()}
-        db.reference(f'licenses/{kid(k)}').update({'devices':devices})
-    return True,'ok',lic
+        if limit != 0 and len(devices) >= limit:
+            return False, "device_limit", lic
+        devices[device_id] = {"bound_at": now_ms()}
+        db.reference(f"licenses/{kid(k)}").update({"devices": devices})
+    return True, "ok", lic
 
-@app.get('/')
-def home(): return jsonify(ok=True,service='license-api',database='firebase-realtime-database')
 
-@app.get('/health')
-def health():
+@app.get("/")
+def home():
     return jsonify(
         ok=True,
-        status='online',
-        service='license-api',
-        firebase='configured'
-    ), 200
+        service="license-api",
+        database="firebase-realtime-database",
+        firebase_configured=init_firebase(),
+        firebase_error=_db_error if not _db_ready else None,
+    )
 
-@app.post('/verify')
+
+@app.get("/health")
+def health():
+    ok = init_firebase()
+    return jsonify(
+        ok=ok,
+        service="license-api",
+        firebase_configured=ok,
+        database_url=DATABASE_URL,
+        error=_db_error if not ok else None,
+    ), (200 if ok else 503)
+
+
+@app.post("/verify")
 def verify():
-    d=request.get_json(silent=True) or {}; ok,reason,lic=check(d.get('license_key'),d.get('app_id'),d.get('device_id'))
-    if not ok: return jsonify(ok=False,reason=reason),403
-    return jsonify(ok=True,license_key=clean(d.get('license_key')),app_id=d.get('app_id'),expires_at=lic.get('expires_at'),max_devices=lic.get('max_devices'))
-
-# ── Online runtime anti-tamper / device enforcement ─────────────────────────
-def _runtime_device_record(device_id):
-    safe = hashlib.sha256(str(device_id or '').encode()).hexdigest()
-    return safe
-
-@app.post('/runtime/check')
-def runtime_check():
-    d = request.get_json(silent=True) or {}
-    app_id = str(d.get('app_id', '') or '').strip()
-    device_id = str(d.get('device_id', '') or '').strip()
-    if not app_id or not device_id:
-        return jsonify(ok=False, blocked=True, reason='missing_fields'), 400
-
-    ref = db.reference(f'runtime_devices/{_runtime_device_record(device_id)}')
-    rec = ref.get() or {}
-
-    # A device explicitly blocked by the backend is rejected immediately.
-    if rec.get('blocked') is True:
-        return jsonify(
-            ok=False,
-            blocked=True,
-            reason=rec.get('reason', 'runtime_blocked')
-        ), 403
-
-    # Register/update last-seen information.
-    now = now_ms()
-    update = {
-        'device_id_hash': _runtime_device_record(device_id),
-        'app_id': app_id,
-        'last_seen_at': now,
-        'blocked': False,
-    }
-    if not rec:
-        update['first_seen_at'] = now
-    ref.update(update)
-
-    return jsonify(ok=True, blocked=False)
-
-
-@app.post('/runtime/event')
-def runtime_event():
-    d = request.get_json(silent=True) or {}
-    app_id = str(d.get('app_id', '') or '').strip()
-    device_id = str(d.get('device_id', '') or '').strip()
-    event = str(d.get('event', '') or '').strip()
-    reason = str(d.get('reason', '') or '').strip()[:200]
-    details = str(d.get('details', '') or '').strip()[:1000]
-
-    if not app_id or not device_id or not event:
-        return jsonify(ok=False, error='missing_fields'), 400
-
-    device_hash = _runtime_device_record(device_id)
-    now = now_ms()
-
-    db.reference(
-        f'runtime_events/{device_hash}/{now}_{secrets.token_hex(4)}'
-    ).set({
-        'app_id': app_id,
-        'device_id_hash': device_hash,
-        'event': event,
-        'reason': reason,
-        'details': details,
-        'ts': now,
-    })
-
-    # Conservative policy: explicit suspicious/tamper events block the
-    # device only when the runtime reports a concrete signal.
-    suspicious = event == 'tamper' and bool(reason)
-    if suspicious:
-        db.reference(f'runtime_devices/{device_hash}').update({
-            'app_id': app_id,
-            'blocked': True,
-            'reason': reason or 'runtime_tamper',
-            'blocked_at': now,
-            'last_event_details': details,
-        })
-        return jsonify(ok=True, blocked=True)
-
-    db.reference(f'runtime_devices/{device_hash}').update({
-        'app_id': app_id,
-        'last_seen_at': now,
-    })
-    return jsonify(ok=True, blocked=False)
-
-@app.post('/admin/create-key')
-def create_key():
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    d=request.get_json(silent=True) or {}
+    problem = require_firebase()
+    if problem:
+        return problem
     try:
-        days = int(d.get('days', 30))
-        limit = int(d.get('max_devices', 1))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error='days and max_devices must be integers'), 400
-    app_id = str(d.get('app_id', '') or '').strip()
-    if days < 1 or limit < 0:
-        return jsonify(ok=False, error='invalid parameters'), 400
-    k=newkey(); created=now_ms(); rec={'app_id':app_id,'created_at':created,'expires_at':created+days*86400000,'max_devices':limit,'revoked':False,'devices':{}}
-    db.reference(f'licenses/{kid(k)}').set(rec)
-    return jsonify(ok=True,license_key=k,**rec),201
+        d = request.get_json(silent=True) or {}
+        ok, reason, lic = check(
+            d.get("license_key"), d.get("app_id"), d.get("device_id")
+        )
+        if not ok:
+            return jsonify(ok=False, reason=reason), 403
+        return jsonify(
+            ok=True,
+            license_key=clean(d.get("license_key")),
+            app_id=d.get("app_id"),
+            expires_at=lic.get("expires_at"),
+            max_devices=lic.get("max_devices"),
+        )
+    except Exception as exc:
+        return firebase_error("verify", exc)
 
-@app.get('/admin/status/<key>')
+
+# ---------------- Runtime anti-tamper ----------------
+
+def _runtime_device_record(device_id):
+    return hashlib.sha256(str(device_id or "").encode()).hexdigest()
+
+
+@app.post("/runtime/check")
+def runtime_check():
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        d = request.get_json(silent=True) or {}
+        app_id = str(d.get("app_id", "") or "").strip()
+        device_id = str(d.get("device_id", "") or "").strip()
+        if not app_id or not device_id:
+            return jsonify(ok=False, blocked=True, reason="missing_fields"), 400
+
+        ref = db.reference(f"runtime_devices/{_runtime_device_record(device_id)}")
+        rec = ref.get() or {}
+        if rec.get("blocked") is True:
+            return jsonify(
+                ok=False,
+                blocked=True,
+                reason=rec.get("reason", "runtime_blocked"),
+            ), 403
+
+        now = now_ms()
+        update = {
+            "device_id_hash": _runtime_device_record(device_id),
+            "app_id": app_id,
+            "last_seen_at": now,
+            "blocked": False,
+        }
+        if not rec:
+            update["first_seen_at"] = now
+        ref.update(update)
+        return jsonify(ok=True, blocked=False)
+    except Exception as exc:
+        return firebase_error("runtime_check", exc)
+
+
+@app.post("/runtime/event")
+def runtime_event():
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        d = request.get_json(silent=True) or {}
+        app_id = str(d.get("app_id", "") or "").strip()
+        device_id = str(d.get("device_id", "") or "").strip()
+        event = str(d.get("event", "") or "").strip()
+        reason = str(d.get("reason", "") or "").strip()[:200]
+        details = str(d.get("details", "") or "").strip()[:1000]
+        if not app_id or not device_id or not event:
+            return jsonify(ok=False, error="missing_fields"), 400
+
+        device_hash = _runtime_device_record(device_id)
+        now = now_ms()
+        db.reference(f"runtime_events/{device_hash}/{now}_{secrets.token_hex(4)}").set({
+            "app_id": app_id,
+            "device_id_hash": device_hash,
+            "event": event,
+            "reason": reason,
+            "details": details,
+            "ts": now,
+        })
+
+        if event == "tamper" and reason:
+            db.reference(f"runtime_devices/{device_hash}").update({
+                "app_id": app_id,
+                "blocked": True,
+                "reason": reason,
+                "blocked_at": now,
+                "last_event_details": details,
+            })
+            return jsonify(ok=True, blocked=True)
+
+        db.reference(f"runtime_devices/{device_hash}").update({
+            "app_id": app_id,
+            "last_seen_at": now,
+        })
+        return jsonify(ok=True, blocked=False)
+    except Exception as exc:
+        return firebase_error("runtime_event", exc)
+
+
+# ---------------- Admin license endpoints ----------------
+
+def admin_guard():
+    if not auth():
+        return jsonify(ok=False, error="unauthorized"), 401
+    return None
+
+
+@app.post("/admin/create-key")
+def create_key():
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        d = request.get_json(silent=True) or {}
+        try:
+            days = int(d.get("days", 30))
+            limit = int(d.get("max_devices", 1))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="days and max_devices must be integers"), 400
+
+        app_id = str(d.get("app_id", "") or "").strip()
+        if days < 1 or days > 36500:
+            return jsonify(ok=False, error="days must be between 1 and 36500"), 400
+        if limit < 0:
+            return jsonify(ok=False, error="max_devices cannot be negative"), 400
+        if len(app_id) > 100:
+            return jsonify(ok=False, error="app_id is too long"), 400
+
+        k = newkey()
+        created = now_ms()
+        rec = {
+            "app_id": app_id,
+            "created_at": created,
+            "expires_at": created + days * 86400000,
+            "max_devices": limit,
+            "revoked": False,
+            "devices": {},
+        }
+        db.reference(f"licenses/{kid(k)}").set(rec)
+        return jsonify(ok=True, license_key=k, **rec), 201
+    except Exception as exc:
+        return firebase_error("admin_create_key", exc)
+
+
+@app.get("/admin/status/<key>")
 def status(key):
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    lic=get(key)
-    if not lic: return jsonify(ok=False,error='not_found'),404
-    return jsonify(ok=True,license_key=clean(key),**lic)
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        lic = get(key)
+        if not lic:
+            return jsonify(ok=False, error="not_found"), 404
+        return jsonify(ok=True, license_key=clean(key), **lic)
+    except Exception as exc:
+        return firebase_error("admin_status", exc)
 
-@app.post('/admin/revoke/<key>')
+
+@app.post("/admin/revoke/<key>")
 def revoke(key):
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    if not get(key): return jsonify(ok=False,error='not_found'),404
-    db.reference(f'licenses/{kid(key)}').update({'revoked':True,'revoked_at':now_ms()})
-    return jsonify(ok=True,license_key=clean(key),revoked=True)
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        if not get(key):
+            return jsonify(ok=False, error="not_found"), 404
+        db.reference(f"licenses/{kid(key)}").update({
+            "revoked": True,
+            "revoked_at": now_ms(),
+        })
+        return jsonify(ok=True, license_key=clean(key), revoked=True)
+    except Exception as exc:
+        return firebase_error("admin_revoke", exc)
 
-@app.post('/admin/unrevoke/<key>')
+
+@app.post("/admin/unrevoke/<key>")
 def unrevoke(key):
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    if not get(key): return jsonify(ok=False,error='not_found'),404
-    db.reference(f'licenses/{kid(key)}').update({'revoked':False,'unrevoked_at':now_ms()})
-    return jsonify(ok=True,license_key=clean(key),revoked=False)
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        if not get(key):
+            return jsonify(ok=False, error="not_found"), 404
+        db.reference(f"licenses/{kid(key)}").update({
+            "revoked": False,
+            "unrevoked_at": now_ms(),
+        })
+        return jsonify(ok=True, license_key=clean(key), revoked=False)
+    except Exception as exc:
+        return firebase_error("admin_unrevoke", exc)
 
-@app.post('/admin/reset-devices/<key>')
+
+@app.post("/admin/reset-devices/<key>")
 def reset_devices(key):
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    if not get(key): return jsonify(ok=False,error='not_found'),404
-    db.reference(f'licenses/{kid(key)}').update({'devices':{},'devices_reset_at':now_ms()})
-    return jsonify(ok=True,license_key=clean(key),devices={})
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        if not get(key):
+            return jsonify(ok=False, error="not_found"), 404
+        db.reference(f"licenses/{kid(key)}").update({
+            "devices": {},
+            "devices_reset_at": now_ms(),
+        })
+        return jsonify(ok=True, license_key=clean(key), devices={})
+    except Exception as exc:
+        return firebase_error("admin_reset_devices", exc)
 
-@app.get('/admin/list')
+
+@app.get("/admin/list")
 def list_keys():
-    if not auth(): return jsonify(ok=False,error='unauthorized'),401
-    data=db.reference('licenses').get() or {}
-    return jsonify(ok=True,count=len(data),licenses=[dict(v or {},id=k) for k,v in data.items()])
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        data = db.reference("licenses").get() or {}
+        if not isinstance(data, dict):
+            data = {}
+        licenses = [dict(v or {}, id=k) for k, v in data.items() if isinstance(v, dict)]
+        return jsonify(ok=True, count=len(licenses), licenses=licenses)
+    except Exception as exc:
+        return firebase_error("admin_list", exc)
 
-@app.errorhandler(405)
-def method_not_allowed(e):
-    return jsonify(ok=False, error='method_not_allowed', allowed=list(e.valid_methods or [])), 405
 
 @app.errorhandler(404)
 def not_found(e):
+    return jsonify(ok=False, error="not_found"), 404
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
     return jsonify(
         ok=False,
-        error='not_found',
-        message='Route does not exist',
-        service='license-api'
-    ), 404
+        error="method_not_allowed",
+        allowed=list(e.valid_methods or []),
+    ), 405
 
 
-application=app
+@app.errorhandler(500)
+def server_error(e):
+    print("[UNHANDLED 500]")
+    traceback.print_exc()
+    return jsonify(
+        ok=False,
+        error="internal_server_error",
+        message="Unhandled server exception. Check Vercel logs.",
+    ), 500
+
+
+application = app
