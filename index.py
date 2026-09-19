@@ -269,6 +269,69 @@ def runtime_event():
         return firebase_error("runtime_event", exc)
 
 
+
+@app.get("/admin/runtime-devices")
+def list_runtime_devices():
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        data = db.reference("runtime_devices").get() or {}
+        devices = []
+        for h, rec in data.items():
+            if not isinstance(rec, dict):
+                continue
+            devices.append({
+                "device_id_hash": str(h),
+                "app_id": rec.get("app_id", ""),
+                "blocked": bool(rec.get("blocked")),
+                "reason": rec.get("reason", ""),
+                "blocked_at": rec.get("blocked_at"),
+                "last_seen_at": rec.get("last_seen_at"),
+                "first_seen_at": rec.get("first_seen_at"),
+                "unblocked_at": rec.get("unblocked_at"),
+            })
+        devices.sort(key=lambda d: int(d.get("blocked_at") or d.get("last_seen_at") or 0), reverse=True)
+        return jsonify(ok=True, devices=devices[:200])
+    except Exception as exc:
+        return firebase_error("list_runtime_devices", exc)
+
+
+@app.post("/admin/block-runtime")
+def block_runtime():
+    denied = admin_guard()
+    if denied:
+        return denied
+    problem = require_firebase()
+    if problem:
+        return problem
+    try:
+        d = request.get_json(silent=True) or {}
+        device_hash = str(d.get("device_id_hash", "") or "").strip()
+        device_id = str(d.get("device_id", "") or "").strip()
+        if not device_hash and device_id:
+            device_hash = _runtime_device_record(device_id)
+        if not device_hash:
+            return jsonify(ok=False, error="missing_device_id"), 400
+        ref = db.reference(f"runtime_devices/{device_hash}")
+        rec = ref.get() or {}
+        if not rec:
+            return jsonify(ok=False, error="not_found"), 404
+        now = now_ms()
+        ref.update({
+            "blocked": True,
+            "reason": "admin_manual_block",
+            "blocked_at": now,
+            "last_event_details": "Manual admin block",
+        })
+        return jsonify(ok=True, blocked=True, device_id_hash=device_hash)
+    except Exception as exc:
+        return firebase_error("block_runtime", exc)
+
+
 # ---------------- Admin license endpoints ----------------
 
 def admin_guard():
@@ -288,9 +351,11 @@ def unblock_runtime():
     try:
         d = request.get_json(silent=True) or {}
         device_id = str(d.get("device_id", "") or "").strip()
-        if not device_id:
+        device_hash = str(d.get("device_id_hash", "") or "").strip()
+        if not device_id and not device_hash:
             return jsonify(ok=False, error="missing_device_id"), 400
-        device_hash = _runtime_device_record(device_id)
+        if not device_hash:
+            device_hash = _runtime_device_record(device_id)
         ref = db.reference(f"runtime_devices/{device_hash}")
         rec = ref.get() or {}
         if not rec:
