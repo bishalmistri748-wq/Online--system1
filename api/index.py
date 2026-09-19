@@ -5,6 +5,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 128 * 1024
 DATABASE_URL = os.environ.get('FIREBASE_DATABASE_URL','https://gfxtool-bb32f-default-rtdb.firebaseio.com/').rstrip('/')
 ADMIN_SECRET = os.environ.get('ADMIN_SECRET','SlFVoNDazRPb3A0n1DvWmXuEdcfoIfiMOjL7diW-hVLR-u4DC9MgqkpVK8JSN2NyUrvYVBC-wviN5D6KBoIzlwRvsw4VC9hYR9yi2V6yPzUV4sHhClDRqPVufwqivGXGEUxX9gY74ZxS9m1jSrNq9jP_PWzJwecJox0BeGBS9DA3yuwuVzTG5XLqI2r6pXEaY4CgNNbhz0jkpoKVzWiwnEhAbgFhTVHpaafmXJo1Ipx0PIVklKZdmjVf1t1Pgt-IaYC1ZVq394JxmT6uKTjGdd1Cm7RqOvJyEYNtlx5MfoRglVBJTbIRpSVGUN7cL-bfhGKNR3tarOSZI4eM9EL9rQ').strip()
 
@@ -40,7 +41,12 @@ def check(k, app_id, device_id):
     return True,'ok',lic
 
 @app.get('/')
-def home(): return jsonify(ok=True,service='license-api',database='firebase-realtime-database')
+def home():
+    return jsonify(ok=True,service='license-api',database='firebase-realtime-database',status='online')
+
+@app.get('/health')
+def health():
+    return jsonify(ok=True,status='healthy',service='license-api')
 
 @app.post('/verify')
 def verify():
@@ -185,6 +191,10 @@ def list_keys():
 @app.errorhandler(405)
 def method_not_allowed(e):
     return jsonify(ok=False, error='method_not_allowed', allowed=list(e.valid_methods or [])), 405
+
+@app.errorhandler(413)
+def request_too_large(e):
+    return jsonify(ok=False, error='request_too_large'), 413
 
 @app.errorhandler(404)
 def not_found(e):
